@@ -1,0 +1,82 @@
+version: "3.9"
+
+services:
+  app-db:
+    image: postgres:16
+    container_name: bff_app_db
+    environment:
+      POSTGRES_DB: bff_app
+      POSTGRES_USER: bff
+      POSTGRES_PASSWORD: change_me
+    ports:
+      - "5433:5432"
+    volumes:
+      - app-db-data:/var/lib/postgresql/data
+
+  keycloak-db:
+    image: postgres:16
+    container_name: keycloak_db
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: kc
+      POSTGRES_PASSWORD: change_me
+    ports:
+      - "5434:5432"
+    volumes:
+      - keycloak-db-data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    container_name: bff_redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:25.0.0
+    container_name: keycloak
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
+      KC_DB_USERNAME: kc
+      KC_DB_PASSWORD: change_me
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_PROXY_HEADERS: xforwarded
+    command:
+      - start-dev
+      - --hostname-strict=false
+      - --import-realm
+    volumes:
+      - ./keycloak/realm.json:/opt/keycloak/data/import/realm.json:ro
+    ports:
+      - "8081:8080"
+    depends_on:
+      - keycloak-db
+
+  bff-app:
+     build:
+       context: .
+       dockerfile: Dockerfile
+     container_name: bff_app
+     environment:
+       SPRING_PROFILES_ACTIVE: dev
+       SPRING_DATASOURCE_URL: jdbc:postgresql://app-db:5432/bff_app
+       SPRING_DATASOURCE_USERNAME: bff
+       SPRING_DATASOURCE_PASSWORD: change_me
+       SPRING_DATA_REDIS_HOST: redis
+       SPRING_DATA_REDIS_PORT: 6379
+       APP_KEYCLOAK_SERVER_URL: http://keycloak:8080
+     depends_on:
+       - app-db
+       - redis
+       - keycloak
+     ports:
+       - "8080:8080"
+
+volumes:
+  app-db-data:
+  keycloak-db-data:
+  redis-data:

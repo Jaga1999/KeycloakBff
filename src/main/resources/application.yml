@@ -1,0 +1,65 @@
+spring:
+  application:
+    name: keycloak-bff
+
+  profiles:
+    active: dev
+
+  datasource:
+    url: jdbc:postgresql://localhost:5433/bff_app?gssEncMode=disable
+    username: bff
+    password: change_me
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      driver-properties:
+        timezone: UTC
+
+  jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        format_sql: true
+        jdbc:
+          time_zone: UTC
+    open-in-view: false
+    show-sql: false
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      timeout: 3000
+
+server:
+  port: 8080
+  servlet:
+    context-path: /api
+
+logging:
+  level:
+    root: INFO
+    org.springframework.security: INFO
+    com.example.bff: DEBUG
+
+app:
+  security:
+    session-cookie-name: SESSION_ID
+    session-cookie-secure: true
+    session-cookie-same-site: Strict
+  keycloak:
+    server-url: http://localhost:8081
+    realm: bff-realm
+    client-id: bff-client
+    client-secret: change_me
+    token-endpoint: /realms/bff-realm/protocol/openid-connect/token
+    logout-endpoint: /realms/bff-realm/protocol/openid-connect/logout
+    admin:
+      client-id: admin-cli
+      username: admin
+      password: admin
