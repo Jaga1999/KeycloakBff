@@ -10,6 +10,8 @@ import com.example.bff.auth.dto.RegisterResponse;
 import com.example.bff.auth.service.AuthService;
 import com.example.bff.auth.service.SessionService;
 import com.example.bff.common.api.ApiResponse;
+import com.example.bff.common.web.CookieUtils;
+import com.example.bff.config.KeycloakProperties;
 import com.example.bff.config.SecurityProperties;
 import com.example.bff.user.entity.UserEntity;
 import com.example.bff.user.repository.UserRepository;
@@ -31,6 +33,8 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import java.util.Optional;
 import java.util.UUID;
@@ -46,6 +50,8 @@ public class AuthController {
     private final UserRepository userRepository;
     private final SessionService sessionService;
     private final SecurityProperties securityProperties;
+    private final KeycloakProperties keycloakProperties;
+    private final CookieUtils cookieUtils;
 
     @PostMapping("/register")
     @Operation(summary = "Register a new user", description = "Registers a new user in Keycloak and synchronizes them into the application database.")
@@ -72,26 +78,44 @@ public class AuthController {
         UUID sessionId = UUID.randomUUID();
         LoginResponse response = authService.login(request, sessionId);
 
-        Cookie cookie = new Cookie(securityProperties.getSessionCookieName(), sessionId.toString());
-        cookie.setHttpOnly(true);
-        cookie.setSecure(securityProperties.isSessionCookieSecure());
-        cookie.setPath("/");
-        cookie.setAttribute("SameSite", securityProperties.getSessionCookieSameSite());
-        
-        if (request.rememberMe()) {
-            // 30 days
-            cookie.setMaxAge(60 * 60 * 24 * 30);
-        } else {
-            // session cookie
-            cookie.setMaxAge(-1);
-        }
-        
-        servletResponse.addCookie(cookie);
-        log.debug("Set-Cookie header added for session: {}", sessionId);
+        cookieUtils.addSessionCookie(servletResponse, sessionId, request.rememberMe());
 
         ApiResponse<LoginResponse> body =
                 ApiResponse.success(null, HttpStatus.OK.value(), response.message(), response);
         return ResponseEntity.ok(body);
+    }
+
+    @GetMapping("/google")
+    @Operation(summary = "Redirect to Google login", description = "Redirects the user to Keycloak for Google authentication.")
+    public void googleLogin(HttpServletResponse response) throws java.io.IOException {
+        String url = UriComponentsBuilder.fromUriString(keycloakProperties.getServerUrl())
+                .path(keycloakProperties.getAuthorizeEndpoint())
+                .queryParam("client_id", keycloakProperties.getClientId())
+                .queryParam("redirect_uri", keycloakProperties.getRedirectUri())
+                .queryParam("response_type", "code")
+                .queryParam("scope", "openid profile email")
+                .queryParam("kc_idp_hint", "google")
+                .queryParam("prompt", "select_account")
+                .toUriString();
+        
+        log.info("Redirecting to Keycloak for Google login: {}", url);
+        response.sendRedirect(url);
+    }
+
+    @GetMapping("/callback")
+    @Operation(summary = "OAuth callback", description = "Handles the callback from Keycloak after Google authentication.")
+    public void oauthCallback(
+            @RequestParam("code") String code,
+            HttpServletResponse servletResponse) throws java.io.IOException {
+        log.info("Received OAuth callback with code");
+        UUID sessionId = UUID.randomUUID();
+        authService.oauthCallback(code, sessionId);
+
+        cookieUtils.addSessionCookie(servletResponse, sessionId, false);
+
+        String finalRedirectUrl = keycloakProperties.getDashboardUrl();
+        log.info("Redirecting to: {}", finalRedirectUrl);
+        servletResponse.sendRedirect(finalRedirectUrl);
     }
 
     @GetMapping("/me")
@@ -141,13 +165,12 @@ public class AuthController {
                         });
                     } catch (IllegalArgumentException ignored) {
                     }
-                    cookie.setValue("");
-                    cookie.setMaxAge(0);
-                    cookie.setPath("/");
-                    response.addCookie(cookie);
                 }
             }
         }
+        
+        cookieUtils.clearSessionCookie(response);
+        
         LogoutResponse payload = new LogoutResponse("User logged out successfully");
         ApiResponse<LogoutResponse> body =
                 ApiResponse.success(null, HttpStatus.OK.value(), payload.message(), payload);

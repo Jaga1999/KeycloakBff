@@ -96,15 +96,30 @@ public class SessionAuthenticationFilter extends OncePerRequestFilter {
 
     private void refreshAccessToken(Session session) {
         log.debug("Refreshing access token for session: {}", session.getSessionId());
-        Map<String, Object> refreshResponse = keycloakAuthClient.refreshToken(session.getRefreshToken()).block();
+        Map<String, Object> refreshResponse = null;
+        try {
+            refreshResponse = keycloakAuthClient.refreshToken(session.getRefreshToken()).block();
+        } catch (Exception e) {
+            log.error("Exception during token refresh for session {}: {}", session.getSessionId(), e.getMessage());
+        }
+
         if (refreshResponse == null || !refreshResponse.containsKey("access_token")) {
-            log.error("Failed to refresh access token for session: {}", session.getSessionId());
-            throw new TokenRefreshException("Unable to refresh access token");
+            log.error("Failed to refresh access token for session: {}. Session may be invalid.", session.getSessionId());
+            sessionService.delete(session.getSessionId());
+            return;
         }
         String newAccessToken = (String) refreshResponse.get("access_token");
+        String newRefreshToken = (String) refreshResponse.get("refresh_token");
         Integer expiresIn = (Integer) refreshResponse.getOrDefault("expires_in", 900);
+        Integer refreshExpiresIn = (Integer) refreshResponse.getOrDefault("refresh_expires_in", 1800);
+        
         session.setAccessToken(newAccessToken);
         session.setAccessTokenExpiresAt(Instant.now().plusSeconds(expiresIn));
+        if (newRefreshToken != null) {
+            session.setRefreshToken(newRefreshToken);
+            session.setRefreshTokenExpiresAt(Instant.now().plusSeconds(refreshExpiresIn));
+        }
+        
         sessionService.save(session);
         log.debug("Access token refreshed successfully for session: {}", session.getSessionId());
     }

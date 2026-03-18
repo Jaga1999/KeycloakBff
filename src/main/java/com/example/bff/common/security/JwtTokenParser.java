@@ -1,7 +1,4 @@
 package com.example.bff.common.security;
-
-import com.nimbusds.jose.JOSEException;
-import com.nimbusds.jose.JWSObject;
 import com.nimbusds.jwt.SignedJWT;
 
 import java.text.ParseException;
@@ -25,7 +22,6 @@ public final class JwtTokenParser {
         }
     }
 
-    @SuppressWarnings("unchecked")
     public static Set<String> extractRealmRoles(Map<String, Object> claims) {
         Object realmAccess = claims.get("realm_access");
         if (!(realmAccess instanceof Map<?, ?> realmMap)) {

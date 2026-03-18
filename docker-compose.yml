@@ -5,11 +5,11 @@ services:
     image: postgres:16
     container_name: bff_app_db
     environment:
-      POSTGRES_DB: bff_app
-      POSTGRES_USER: bff
-      POSTGRES_PASSWORD: change_me
+      POSTGRES_DB: ${APP_DB_NAME}
+      POSTGRES_USER: ${APP_DB_USER}
+      POSTGRES_PASSWORD: ${APP_DB_PASSWORD}
     ports:
-      - "5433:5432"
+      - "${APP_DB_PORT}:5432"
     volumes:
       - app-db-data:/var/lib/postgresql/data
 
@@ -17,11 +17,11 @@ services:
     image: postgres:16
     container_name: keycloak_db
     environment:
-      POSTGRES_DB: keycloak
-      POSTGRES_USER: kc
-      POSTGRES_PASSWORD: change_me
+      POSTGRES_DB: ${KC_DB_NAME}
+      POSTGRES_USER: ${KC_DB_USER}
+      POSTGRES_PASSWORD: ${KC_DB_PASSWORD}
     ports:
-      - "5434:5432"
+      - "${KC_DB_PORT}:5432"
     volumes:
       - keycloak-db-data:/var/lib/postgresql/data
 
@@ -30,7 +30,7 @@ services:
     container_name: bff_redis
     command: ["redis-server", "--appendonly", "yes"]
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT}:6379"
     volumes:
       - redis-data:/data
 
@@ -39,20 +39,32 @@ services:
     container_name: keycloak
     environment:
       KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
-      KC_DB_USERNAME: kc
-      KC_DB_PASSWORD: change_me
-      KEYCLOAK_ADMIN: admin
-      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/${KC_DB_NAME}
+      KC_DB_USERNAME: ${KC_DB_USER}
+      KC_DB_PASSWORD: ${KC_DB_PASSWORD}
+      KEYCLOAK_ADMIN: ${KC_ADMIN_USER}
+      KEYCLOAK_ADMIN_PASSWORD: ${KC_ADMIN_PASSWORD}
       KC_PROXY_HEADERS: xforwarded
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      KC_REALM: ${KC_REALM}
+      KC_PORT: ${KC_PORT}
+      SPRING_PORT: ${SPRING_PORT}
+      KC_CLIENT_SECRET: ${KC_CLIENT_SECRET}
     command:
       - start-dev
       - --hostname-strict=false
       - --import-realm
+      - "-DSPRING_PORT=${SPRING_PORT}"
+      - "-DKC_PORT=${KC_PORT}"
+      - "-DKC_REALM=${KC_REALM}"
+      - "-DKC_CLIENT_SECRET=${KC_CLIENT_SECRET}"
+      - "-DGOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}"
+      - "-DGOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}"
     volumes:
       - ./keycloak/realm.json:/opt/keycloak/data/import/realm.json:ro
     ports:
-      - "8081:8080"
+      - "${KC_PORT}:8080"
     depends_on:
       - keycloak-db
 
@@ -62,19 +74,32 @@ services:
        dockerfile: Dockerfile
      container_name: bff_app
      environment:
-       SPRING_PROFILES_ACTIVE: dev
-       SPRING_DATASOURCE_URL: jdbc:postgresql://app-db:5432/bff_app
-       SPRING_DATASOURCE_USERNAME: bff
-       SPRING_DATASOURCE_PASSWORD: change_me
+       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE}
+       SPRING_DATASOURCE_URL: jdbc:postgresql://app-db:5432/${APP_DB_NAME}
+       SPRING_DATASOURCE_USERNAME: ${APP_DB_USER}
+       SPRING_DATASOURCE_PASSWORD: ${APP_DB_PASSWORD}
        SPRING_DATA_REDIS_HOST: redis
        SPRING_DATA_REDIS_PORT: 6379
        APP_KEYCLOAK_SERVER_URL: http://keycloak:8080
-     depends_on:
-       - app-db
-       - redis
-       - keycloak
-     ports:
-       - "8080:8080"
+       KC_REALM: ${KC_REALM}
+       KC_CLIENT_ID: ${KC_CLIENT_ID}
+       KC_CLIENT_SECRET: ${KC_CLIENT_SECRET}
+       KC_ADMIN_CLIENT_ID: ${KC_ADMIN_CLIENT_ID}
+       KC_ADMIN_USER: ${KC_ADMIN_USER}
+       KC_ADMIN_PASSWORD: ${KC_ADMIN_PASSWORD}
+       SESSION_COOKIE_NAME: ${SESSION_COOKIE_NAME}
+       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE}
+       SESSION_COOKIE_SAME_SITE: ${SESSION_COOKIE_SAME_SITE}
+       REDIS_HOST: redis
+       REDIS_PORT: 6379
+       APP_DB_HOST: app-db
+       APP_DB_PORT: 5432
+       APP_DB_NAME: ${APP_DB_NAME}
+       APP_DB_USER: ${APP_DB_USER}
+       APP_DB_PASSWORD: ${APP_DB_PASSWORD}
+       DASHBOARD_URL: ${DASHBOARD_URL}
+       FRONTEND_URL: ${FRONTEND_URL}
+       SERVER_PORT: ${SPRING_PORT}
 
 volumes:
   app-db-data:

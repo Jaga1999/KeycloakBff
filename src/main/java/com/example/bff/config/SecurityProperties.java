@@ -20,6 +20,8 @@ public class SecurityProperties {
             "/auth/login",
             "/auth/register",
             "/auth/forgot-password",
+            "/auth/google",
+            "/auth/callback",
             "/swagger-ui/**",
             "/v3/api-docs/**",
             "/swagger-ui.html"

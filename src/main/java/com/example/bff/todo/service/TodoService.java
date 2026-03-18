@@ -6,6 +6,7 @@ import com.example.bff.todo.dto.TodoResponse;
 import com.example.bff.todo.dto.TodoUpdateRequest;
 import com.example.bff.todo.entity.TodoEntity;
 import com.example.bff.todo.repository.TodoRepository;
+import com.example.bff.todo.mapper.TodoMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -21,14 +22,13 @@ import java.util.stream.Collectors;
 public class TodoService {
 
     private final TodoRepository todoRepository;
+    private final TodoMapper todoMapper;
 
     public TodoResponse create(UUID currentUserId, TodoCreateRequest request) {
         log.debug("Creating new todo for user: {}", currentUserId);
         Instant now = Instant.now();
-        TodoEntity todo = new TodoEntity();
+        TodoEntity todo = todoMapper.toEntity(request);
         todo.setId(UUID.randomUUID());
-        todo.setTitle(request.title());
-        todo.setDescription(request.description());
         todo.setOwnerId(currentUserId);
         todo.setCreatedBy(currentUserId);
         todo.setUpdatedBy(currentUserId);
@@ -36,13 +36,13 @@ public class TodoService {
         todo.setUpdatedAt(now);
         TodoEntity saved = todoRepository.save(todo);
         log.info("Todo created: {} for owner {}", saved.getId(), currentUserId);
-        return toResponse(saved);
+        return todoMapper.toDto(saved);
     }
 
     public List<TodoResponse> findAllForUser(UUID currentUserId, boolean isAdmin) {
         log.debug("Finding todos for user: {} (isAdmin: {})", currentUserId, isAdmin);
         List<TodoEntity> todos = isAdmin ? todoRepository.findAll() : todoRepository.findAllByOwnerId(currentUserId);
-        return todos.stream().map(this::toResponse).collect(Collectors.toList());
+        return todos.stream().map(todoMapper::toDto).collect(Collectors.toList());
     }
 
     public TodoResponse findByIdForUser(UUID id, UUID currentUserId, boolean isAdmin) {
@@ -55,7 +55,7 @@ public class TodoService {
             log.warn("Access denied to todo {} for user {}", id, currentUserId);
             throw new TodoNotFoundException(id);
         }
-        return toResponse(todo);
+        return todoMapper.toDto(todo);
     }
 
     public TodoResponse update(UUID id, UUID currentUserId, boolean isAdmin, TodoUpdateRequest request) {
@@ -65,13 +65,12 @@ public class TodoService {
             log.warn("Update access denied to todo {} for user {}", id, currentUserId);
             throw new TodoNotFoundException(id);
         }
-        todo.setTitle(request.title());
-        todo.setDescription(request.description());
+        todoMapper.updateEntityFromDto(request, todo);
         todo.setUpdatedBy(currentUserId);
         todo.setUpdatedAt(Instant.now());
         TodoEntity saved = todoRepository.save(todo);
         log.info("Todo updated: {}", id);
-        return toResponse(saved);
+        return todoMapper.toDto(saved);
     }
 
     public void delete(UUID id, UUID currentUserId, boolean isAdmin) {
@@ -83,18 +82,5 @@ public class TodoService {
         }
         todoRepository.delete(todo);
         log.info("Todo deleted: {}", id);
-    }
-
-    private TodoResponse toResponse(TodoEntity todo) {
-        return new TodoResponse(
-                todo.getId(),
-                todo.getTitle(),
-                todo.getDescription(),
-                todo.getOwnerId(),
-                todo.getCreatedBy(),
-                todo.getUpdatedBy(),
-                todo.getCreatedAt(),
-                todo.getUpdatedAt()
-        );
     }
 }

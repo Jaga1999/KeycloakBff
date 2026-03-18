@@ -17,6 +17,9 @@ public class KeycloakProperties {
     private String clientSecret;
     private String tokenEndpoint;
     private String logoutEndpoint;
+    private String authorizeEndpoint;
+    private String redirectUri;
+    private String dashboardUrl;
     private Admin admin = new Admin();
 
     @Getter

@@ -13,6 +13,7 @@ import com.example.bff.common.exception.UserAlreadyExistsException;
 import com.example.bff.common.security.JwtTokenParser;
 import com.example.bff.infrastructure.keycloak.KeycloakAuthClient;
 import com.example.bff.user.entity.UserEntity;
+import com.example.bff.user.mapper.UserMapper;
 import com.example.bff.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -35,6 +36,7 @@ public class AuthService {
     private final KeycloakAuthClient keycloakAuthClient;
     private final UserRepository userRepository;
     private final SessionService sessionService;
+    private final UserMapper userMapper;
 
     @Transactional
     public RegisterResponse register(RegisterRequest request) {
@@ -70,12 +72,8 @@ public class AuthService {
                 adminToken
         ).block();
 
-        UserEntity user = new UserEntity();
+        UserEntity user = userMapper.toEntity(request);
         user.setKeycloakId(keycloakUserId);
-        user.setUsername(request.username());
-        user.setEmail(request.email());
-        user.setFirstName(request.firstName());
-        user.setLastName(request.lastName());
         user.setRoles(new HashSet<>(Set.of("ROLE_USER")));
         user.setCreatedAt(Instant.now());
         user.setUpdatedAt(Instant.now());
@@ -89,31 +87,81 @@ public class AuthService {
         log.debug("Attempting login for user: {}", request.usernameOrEmail());
         Mono<Map<String, Object>> tokenResponseMono = keycloakAuthClient.login(request.usernameOrEmail(), request.password());
         Map<String, Object> tokenResponse = tokenResponseMono.block();
+        return processTokenResponse(tokenResponse, sessionIdHolder, request.rememberMe());
+    }
+
+    @Transactional
+    public LoginResponse oauthCallback(String code, UUID sessionIdHolder) {
+        log.debug("Processing OAuth callback with code");
+        Map<String, Object> tokenResponse = keycloakAuthClient.exchangeCode(code).block();
+        return processTokenResponse(tokenResponse, sessionIdHolder, false);
+    }
+
+    private LoginResponse processTokenResponse(Map<String, Object> tokenResponse, UUID sessionIdHolder, boolean rememberMe) {
         if (tokenResponse == null || !tokenResponse.containsKey("access_token")) {
-            log.warn("Login failed for user: {} - invalid credentials", request.usernameOrEmail());
-            throw new AuthenticationFailedException("Invalid credentials");
+            log.warn("Token response processing failed - no access token");
+            throw new AuthenticationFailedException("Invalid credentials or code");
         }
 
         String accessToken = (String) tokenResponse.get("access_token");
-        Map<String, Object> claims = JwtTokenParser.parse(accessToken);
+        String idToken = (String) tokenResponse.get("id_token");
+        
+        // Wrap claims in a mutable HashMap to avoid UnsupportedOperationException on putAll
+        Map<String, Object> claims = new java.util.HashMap<>(JwtTokenParser.parse(accessToken));
+        
+        // If access token doesn't have profile/email, try parsing the ID token if available
+        if (idToken != null && (!claims.containsKey("email") || !claims.containsKey("preferred_username") || !claims.containsKey("sub"))) {
+            log.debug("Access token is missing profile or subject claims, trying ID token");
+            Map<String, Object> idClaims = JwtTokenParser.parse(idToken);
+            // Merge ID claims into the claims map (prioritize ID claims for profile info)
+            // But keep existing sub if it was there and idClaims doesn't have it
+            idClaims.forEach((key, value) -> {
+                if (value != null) {
+                    claims.put(key, value);
+                }
+            });
+        }
+        
+        log.debug("Final resolved claims: {}", claims);
+        
         String keycloakUserId = (String) claims.get("sub");
-        String username = (String) claims.getOrDefault("preferred_username", request.usernameOrEmail());
-        String email = (String) claims.getOrDefault("email", request.usernameOrEmail());
+        String username = (String) claims.get("preferred_username");
+        String email = (String) claims.get("email");
+        
+        // Use fallbacks for missing claims to avoid DB constraint violations
+        if (username == null) {
+            username = (email != null) ? email : keycloakUserId;
+        }
+        // If username is still null (no sub either), we must fail
+        if (username == null) {
+            log.error("Unable to resolve username or subject from token claims: {}", claims);
+            throw new AuthenticationFailedException("Invalid token: subject missing");
+        }
+
+        if (email == null) {
+            log.warn("Email claim is missing from Keycloak token for user ID: {}", keycloakUserId);
+            // If email is mandatory in DB, we should at least provide a placeholder
+            email = (username.contains("@")) ? username : username + "@no-email.internal";
+        }
+        
+        final String finalUsername = username;
+        final String finalEmail = email;
+        
         Set<String> realmRoles = JwtTokenParser.extractRealmRoles(claims);
 
-        Optional<UserEntity> existingByKeycloak = userRepository.findByKeycloakId(keycloakUserId);
-        Optional<UserEntity> existingByEmail = userRepository.findByEmail(email);
-        Optional<UserEntity> existingByUsername = userRepository.findByUsername(username);
+        Optional<UserEntity> existingByKeycloak = Optional.ofNullable(keycloakUserId).flatMap(userRepository::findByKeycloakId);
+        Optional<UserEntity> existingByEmail = Optional.ofNullable(finalEmail).flatMap(userRepository::findByEmail);
+        Optional<UserEntity> existingByUsername = Optional.ofNullable(finalUsername).flatMap(userRepository::findByUsername);
 
         UserEntity user = existingByKeycloak
                 .or(() -> existingByEmail)
                 .or(() -> existingByUsername)
                 .orElseGet(() -> {
-                    log.info("User not found in local DB, synchronizing from Keycloak claims: {}", username);
+                    log.info("User not found in local DB, synchronizing from Keycloak claims: {}", finalUsername);
                     UserEntity created = new UserEntity();
                     created.setKeycloakId(keycloakUserId);
-                    created.setUsername(username);
-                    created.setEmail(email);
+                    created.setUsername(finalUsername);
+                    created.setEmail(finalEmail);
                     created.setFirstName((String) claims.getOrDefault("given_name", ""));
                     created.setLastName((String) claims.getOrDefault("family_name", ""));
                     created.setRoles(realmRoles.isEmpty() ? new HashSet<>(Set.of("ROLE_USER")) : new HashSet<>(realmRoles));
@@ -132,7 +180,7 @@ public class AuthService {
         session.setRoles(sessionRoles);
         session.setAccessToken(accessToken);
         session.setRefreshToken((String) tokenResponse.get("refresh_token"));
-        session.setRememberMe(request.rememberMe());
+        session.setRememberMe(rememberMe);
         Instant now = Instant.now();
         Integer expiresIn = (Integer) tokenResponse.getOrDefault("expires_in", 900);
         Integer refreshExpiresIn = (Integer) tokenResponse.getOrDefault("refresh_expires_in", 1800);
@@ -143,7 +191,7 @@ public class AuthService {
 
         log.info("User logged in and session created: {} (Session ID: {})", user.getUsername(), sessionIdHolder);
         return new LoginResponse(
-                "User logged in successfully", // Added message argument
+                "User logged in successfully",
                 user.getId(),
                 user.getUsername(),
                 user.getEmail(),
@@ -154,14 +202,7 @@ public class AuthService {
     @Transactional(readOnly = true)
     public MeResponse me(UserEntity user) {
         // Accessing user.getRoles() within a transactional method ensures the collection is initialized
-        return new MeResponse(
-                user.getId(),
-                user.getUsername(),
-                user.getEmail(),
-                user.getFirstName(),
-                user.getLastName(),
-                new HashSet<>(user.getRoles())
-        );
+        return userMapper.toMeResponse(user);
     }
 
     public void forgotPassword(ForgotPasswordRequest request) {

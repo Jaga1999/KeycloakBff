@@ -54,6 +54,30 @@ public class KeycloakAuthClient {
         formData.add("client_secret", properties.getClientSecret());
         formData.add("refresh_token", refreshToken);
 
+        return Mono.fromCallable(() -> {
+            try {
+                return restClient.post()
+                        .uri(properties.getServerUrl() + properties.getTokenEndpoint())
+                        .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                        .body(formData)
+                        .retrieve()
+                        .body(MAP_TYPE);
+            } catch (Exception e) {
+                log.error("Error refreshing token from Keycloak: {}", e.getMessage());
+                return null;
+            }
+        });
+    }
+
+    public Mono<Map<String, Object>> exchangeCode(String code) {
+        log.debug("Keycloak exchange code request");
+        MultiValueMap<String, String> formData = new LinkedMultiValueMap<>();
+        formData.add("grant_type", "authorization_code");
+        formData.add("client_id", properties.getClientId());
+        formData.add("client_secret", properties.getClientSecret());
+        formData.add("code", code);
+        formData.add("redirect_uri", properties.getRedirectUri());
+
         return Mono.fromCallable(() -> restClient.post()
                 .uri(properties.getServerUrl() + properties.getTokenEndpoint())
                 .contentType(MediaType.APPLICATION_FORM_URLENCODED)
