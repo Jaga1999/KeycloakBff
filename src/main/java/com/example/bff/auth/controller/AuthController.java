@@ -105,8 +105,27 @@ public class AuthController {
     @GetMapping("/callback")
     @Operation(summary = "OAuth callback", description = "Handles the callback from Keycloak after Google authentication.")
     public void oauthCallback(
-            @RequestParam("code") String code,
+            @RequestParam(value = "code", required = false) String code,
+            @RequestParam(value = "error", required = false) String error,
+            @RequestParam(value = "error_description", required = false) String errorDescription,
             HttpServletResponse servletResponse) throws java.io.IOException {
+        if (error != null) {
+            log.error("OAuth error: {} - {}", error, errorDescription);
+
+            // redirect to the frontend error page
+            servletResponse.sendRedirect(
+                    keycloakProperties.getDashboardUrl() + "?authError=" + error
+            );
+            return;
+        }
+
+        if (code == null) {
+            log.error("Missing authorization code");
+            servletResponse.sendRedirect(
+                    keycloakProperties.getDashboardUrl() + "?authError=missing_code"
+            );
+            return;
+        }
         log.info("Received OAuth callback with code");
         UUID sessionId = UUID.randomUUID();
         authService.oauthCallback(code, sessionId);
